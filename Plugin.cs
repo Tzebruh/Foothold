@@ -15,7 +15,7 @@ public class Plugin : BaseUnityPlugin
     internal static new ManualLogSource Logger;
 
     internal static Scene currentScene;
-    internal static MainCamera mainCamera;
+    internal static MainCamera? mainCamera;
     internal static bool activated = false;
     internal static Material baseMaterial;
     internal static float alpha = 1;
@@ -58,7 +58,10 @@ public class Plugin : BaseUnityPlugin
 
         Logger.LogInfo($"Loaded Foothold? version {MyPluginInfo.PLUGIN_VERSION}");
     }
-
+    private void OnDestroy()
+    {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
     private void OnGUI()
     {
         if (!configDebugMode.Value) return;
@@ -76,8 +79,9 @@ public class Plugin : BaseUnityPlugin
 
         if (currentScene.name.StartsWith("Level_"))
         {
+            // Reset mainCamera to null so it can be re-found in the new scene
+            mainCamera = null;
             // make pools
-
             for (int i = 0; i < 4000; i++)
             {
                 GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -91,6 +95,12 @@ public class Plugin : BaseUnityPlugin
                 if (i < 2000) pool_balls.Add(ball);
                 else
                 {
+                    // Reset state when leaving game scene
+                    mainCamera = null;
+                    activated = false;
+                    balls.Clear();
+                    redBalls.Clear();
+            
                     ball.GetComponent<Renderer>().material.SetColor("_BaseColor", Color.red);
                     pool_redBalls.Add(ball);
                 }
@@ -158,6 +168,8 @@ public class Plugin : BaseUnityPlugin
     // all this to say I don't care and I'll name my methods whatever I want
     private void RenderVisualization()
     {
+        if (mainCamera == null) return;
+    
         ReturnBallsToPool();
         lastScanTime = Time.time;
         float freq = 0.5f;
