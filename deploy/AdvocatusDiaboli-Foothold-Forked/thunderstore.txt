@@ -1,0 +1,17 @@
+To assemble the Thunderstore package, create a folder called Tzebruh-Foothold and include these files:
+
+Foothold.dll - From <repo>/bin/Debug/netstandard2.1/
+Assets/ - From <repo>/thunderstore/
+
+Then put that folder into a zip file along with these files:
+
+icon.png - From <repo>/thunderstore/
+LICENSE - From <repo>/
+manifest.json - From <repo>/thunderstore/
+README.md - From <repo>/
+
+<repo>/thunderstore/*.zip is gitignored, so the zip file should be <repo>/thunderstore/Tzebruh-Foothold-<version>.zip
+<repo>/thunderstore/Tzebruh-Foothold is also gitignored so you can assemble the folder there
+
+If you compile a new version of the assetbundle, copy:
+foothold - from <repo>/foothold assetbundle project/Assets/ModBundles/ - to <repo>/thunderstore/Assets/

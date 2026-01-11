@@ -5,11 +5,14 @@ using JetBrains.Annotations;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography.X509Certificates;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
+using UnityEngine.UIElements;
 
 namespace Foothold;
 
@@ -38,8 +41,10 @@ public class Plugin : BaseUnityPlugin
     static RenderParams nonStandableRP;
     internal static Material standableMaterial;
     internal static Material nonStandableMaterial;
-    internal static float alpha = 1;
+    internal static float alpha = 0.25f;
+    internal static float baseAlpha = 0.25f;
     internal static bool continuousPaused = false;
+    internal static bool continuousPauseToggleQueued = false;
 
     private static readonly Dictionary<(int, int), PositionYList> positionCache = new();
     
@@ -54,10 +59,12 @@ public class Plugin : BaseUnityPlugin
     private ConfigEntry<StandableColor> configStandableBallColor;
     private ConfigEntry<NonStandableColor> configNonStandableBallColor;
     private ConfigEntry<float> configScalePercent;
+    private ConfigEntry<float> configAlpha;
     private ConfigEntry<float> configRange;
 
     private ConfigEntry<float> configXZFreq;
     private ConfigEntry<int> configMaximumPointsPerFrame;
+    private ConfigEntry<bool> configDetectConcave;
 
     private static SafeXZ nearestGridToCamera; // nearest grid point to camera position, updated each frame
     // This allows caching of grid positions instead of recalculating each time
@@ -67,6 +74,7 @@ public class Plugin : BaseUnityPlugin
     private static float range;
     private static int safeRange;
     private static int maximumRaysPerFrame;
+    private static bool detectConcave;
 
 
 
@@ -87,8 +95,17 @@ public class Plugin : BaseUnityPlugin
     {
         Logger = base.Logger;
 
+        configMode = Config.Bind("General", "Activation Mode", Mode.Continuous, """
+            Toggle: Press once to activate; press again to hide the indicator.
+            Fade Away: Activates every time the button is pressed. The indicator will fade away after 3 seconds. Credit to VicVoss on GitHub for the idea.
+            Trigger: Activates every time the button is pressed. The indicator will remain visible.
+            Continuous: Always active. The indicator will remain visible, and updates as you move. Implemented by cjmanca on GitHub.
+            """);
+
         configStandableBallColor = Config.Bind("Appearance", "Standable ground Color", StandableColor.White, "Change the ball color of standable ground.");
         configNonStandableBallColor = Config.Bind("Appearance", "Non-standable ground Color", NonStandableColor.Red, "Change the ball color of non-standable ground.");
+        configAlpha = Config.Bind("Appearance", "Transparency Percent", 100f, new ConfigDescription("How transparent the balls are.", new AcceptableValueRange<float>(1f, 100f)));
+
 
         configScalePercent = Config.Bind("Appearance", "Scale Percent", 100f, new ConfigDescription("How large the standing point indicators are.", new AcceptableValueRange<float>(1f, 200f)));
 
@@ -96,27 +113,50 @@ public class Plugin : BaseUnityPlugin
 
         configXZFreq = Config.Bind("General", "Horizontal grid spacing", 0.5f, new ConfigDescription("How far apart the balls are placed horizontally. Reducing will affect performance.", new AcceptableValueRange<float>(0.1f, 2f)));
 
-        configMaximumPointsPerFrame = Config.Bind("General", "Maximum points per frame", 100, new ConfigDescription("The maximum number of points to place per frame. Higher values reduce fps but make the visualization appear faster.", new AcceptableValueRange<int>(10, 20000)));
+        configMaximumPointsPerFrame = Config.Bind("General", "Maximum points per frame", 100, new ConfigDescription("The maximum number of raycasts to do per frame to check for standing spots. Higher values reduce fps but make the visualization appear faster.", new AcceptableValueRange<int>(10, 20000)));
+
+        configDetectConcave = Config.Bind("General", "Detect Concave Points", true, "Detecting standing spots on concave meshes takes many extra raycasts. Disabling won't show these standing spots, but will improve performance. Remember to increase 'Maximum points per frame' by about 10x if you enable this (1000+ at least - New default assumes this is enabled).");
 
         configActivationKey = Config.Bind("General", "Activation Key", KeyCode.F);
-
-        configMode = Config.Bind("General", "Activation Mode", Mode.Continuous, """
-            Toggle: Press once to activate; press again to hide the indicator.
-            Fade Away: Activates every time the button is pressed. The indicator will fade away after 3 seconds. Credit to VicVoss on GitHub for the idea.
-            Trigger: Activates every time the button is pressed. The indicator will remain visible.
-            Continuous: Always active. The indicator will remain visible, and updates as you move. Implemented by cjmanca on GitHub.
-            """);
         configDebugMode = Config.Bind("Debug", "Debug Mode", false, "Show debug information");
 
-        string bundlePath = System.IO.Path.Combine(Paths.PluginPath, "Tzebruh-Foothold/Assets/Foothold");
-        var bundle = AssetBundle.LoadFromFile(bundlePath);
-        if (bundle == null)
+        string assemblyFolder = Path.GetDirectoryName(new System.Uri(System.Reflection.Assembly.GetExecutingAssembly().CodeBase).LocalPath);
+        string[] possibleAssetbundlePaths = new string[]
         {
-            Logger.LogError("Failed to load AssetBundle");
+            Path.Combine(assemblyFolder, "Foothold.assetbundle"),
+            Path.Combine(assemblyFolder, "Foothold.bundle"),
+            Path.Combine(assemblyFolder, "Foothold.unity3d"),
+            Path.Combine(assemblyFolder, "assets", "Foothold.assetbundle"),
+            Path.Combine(assemblyFolder, "assets", "Foothold.bundle"),
+            Path.Combine(assemblyFolder, "assets", "Foothold.unity3d"),
+            Path.Combine(assemblyFolder, "Foothold"),
+            Path.Combine(assemblyFolder, "assets", "Foothold"),
+        };
+
+        AssetBundle bundle = null;
+        string bundlePath = null;
+
+        foreach (var path in possibleAssetbundlePaths)
+        {
+            if (File.Exists(path))
+            {
+                bundlePath = path;
+                break;
+            }
+        }
+        if (bundlePath == null)
+        {
+            Logger.LogError("Failed to load AssetBundle (not found)");
             return;
         }
 
-        // Adjust the asset name to whatever you used
+        bundle = AssetBundle.LoadFromFile(bundlePath);
+        if (bundle == null)
+        {
+            Logger.LogError("Failed to load AssetBundle (failed to load from file)");
+            return;
+        }
+
         Material _instancedMat = bundle.LoadAsset<Material>("Foothold");
         if (_instancedMat == null)
         {
@@ -128,16 +168,12 @@ public class Plugin : BaseUnityPlugin
             Logger.LogInfo("Loaded instanced material: " + _instancedMat.name);
         }
 
-        // Try disabling SRP Batcher to see if that frees up instancing.
-        //GraphicsSettings.useScriptableRenderPipelineBatching = false;
-        //Logger.LogInfo("SRP Batcher disabled by mod");
-
 
         ballMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
 
         Logger.LogInfo($"mesh = {ballMesh}");
 
-        //Material mat = new(Shader.Find("Universal Render Pipeline/Lit Instanced"));
+
         Material mat = new(_instancedMat);
         // permanently borrowed from https://discussions.unity.com/t/how-to-make-a-urp-lit-material-semi-transparent-using-script-and-then-set-it-back-to-being-solid/942231/3
         mat.SetFloat("_Surface", 1);
@@ -149,11 +185,16 @@ public class Plugin : BaseUnityPlugin
         mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
         mat.DisableKeyword("_ALPHATEST_ON");
         mat.EnableKeyword("_ALPHABLEND_ON");
-        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
         mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
         mat.renderQueue = (int)RenderQueue.Transparent;
-        mat.color = Color.white;
-        mat.SetColor("_BaseColor", mat.color);
+        mat.enableInstancing = true;
+    
+        Color c = Color.white;
+        c.a = baseAlpha;
+
+        mat.color = c;
+        mat.SetColor("_BaseColor", c);
+        
         mat.enableInstancing = true;
         standableMaterial = mat;
 
@@ -168,11 +209,15 @@ public class Plugin : BaseUnityPlugin
         mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
         mat.DisableKeyword("_ALPHATEST_ON");
         mat.EnableKeyword("_ALPHABLEND_ON");
-        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
         mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
         mat.renderQueue = (int)RenderQueue.Transparent;
-        mat.color = Color.magenta;
-        mat.SetColor("_BaseColor", mat.color);
+
+        c = Color.magenta;
+        c.a = baseAlpha;
+
+        mat.color = c;
+        mat.SetColor("_BaseColor", c);
+        
         mat.enableInstancing = true;
         nonStandableMaterial = mat;
 
@@ -193,6 +238,10 @@ public class Plugin : BaseUnityPlugin
         configXZFreq.SettingChanged += Color_SettingChanged;
         configMaximumPointsPerFrame.SettingChanged += Color_SettingChanged;
         configScalePercent.SettingChanged += Color_SettingChanged;
+        configDetectConcave.SettingChanged += Color_SettingChanged;
+        configAlpha.SettingChanged += Color_SettingChanged;
+
+
 
 
         standableMatrices.Add(new Matrix4x4[500]);
@@ -209,12 +258,12 @@ public class Plugin : BaseUnityPlugin
         if (configMode.Value != Mode.FadeAway)
         {
             Color baseColor = standableMaterial.GetColor("_BaseColor");
-            baseColor.a = alpha;
+            baseColor.a = baseAlpha;
             standableMaterial.SetColor("_BaseColor", baseColor);
             standableRP.material = standableMaterial;
             
             baseColor = nonStandableMaterial.GetColor("_BaseColor");
-            baseColor.a = alpha;
+            baseColor.a = baseAlpha;
             nonStandableMaterial.SetColor("_BaseColor", baseColor);
             nonStandableRP.material = nonStandableMaterial;
         }
@@ -232,9 +281,13 @@ public class Plugin : BaseUnityPlugin
             safeFreq = (int)Mathf.Round(freq * 10f);
             range = Mathf.Round(configRange.Value / freq) * freq; // range needs to be a multiple of frequency for the grid to step properly
             safeRange = (int)Mathf.Round(range * 10f);
-            maximumRaysPerFrame = configMaximumPointsPerFrame.Value;
+            maximumRaysPerFrame = configMaximumPointsPerFrame.Value * 10;
             scalePercent = configScalePercent.Value / 100f;
             scale = Vector3.one / 10 * scalePercent;
+            baseAlpha = configAlpha.Value / 100f;
+            detectConcave = configDetectConcave.Value;
+
+
 
             if (configStandableBallColor.Value == StandableColor.Green)
             {
@@ -267,16 +320,20 @@ public class Plugin : BaseUnityPlugin
 
             if (LastStandableColor != standable)
             {
-                standableMaterial.color = standable;
-                standableMaterial.SetColor("_BaseColor", standable);
+                Color c = standable;
+                c.a = baseAlpha;
+                standableMaterial.color = c;
+                standableMaterial.SetColor("_BaseColor", c);
                 standableRP.material = standableMaterial;
                 LastStandableColor = standable;
             }
 
             if (LastNonStandableColor != NonStandable)
             {
-                nonStandableMaterial.color = NonStandable;
-                nonStandableMaterial.SetColor("_BaseColor", NonStandable);
+                Color c = NonStandable;
+                c.a = baseAlpha;
+                nonStandableMaterial.color = c;
+                nonStandableMaterial.SetColor("_BaseColor", c);
                 nonStandableRP.material = nonStandableMaterial;
                 LastNonStandableColor = NonStandable;
             }
@@ -329,12 +386,12 @@ public class Plugin : BaseUnityPlugin
         GUILayout.Label("highestBallCount: " + highestBallCount);
         GUILayout.Label("positionCache (x/z count): " + positionCache.Count);
 
-
         GUILayout.Label("positionCache (total y count): " + count);
         GUILayout.Label("positionCache (highest total y count): " + highestCount);
         GUILayout.Label("positionCache (allocations): " + PositionKey.totalAllocations);
         GUILayout.Label("positionCache (totalInUse): " + PositionKey.totalInUse);
         GUILayout.Label("positionCache (leaks): " + (PositionKey.totalAllocations - (PositionKey.PoolCount + count)));
+        GUILayout.Label("Total Raycasts Last Render: " + overallTotalCallsLastRender);
 
         GUILayout.Label("alpha: " + alpha);
         GUILayout.Label("isVisualizationRunning: " + isVisualizationRunning.ToString());
@@ -374,9 +431,11 @@ public class Plugin : BaseUnityPlugin
         safeFreq = (int)Mathf.Round(freq * 10f);
         range = Mathf.Round(configRange.Value / freq) * freq; // range needs to be a multiple of frequency for the grid to step properly
         safeRange = (int)Mathf.Round(range * 10f);
-        maximumRaysPerFrame = configMaximumPointsPerFrame.Value;
+        maximumRaysPerFrame = configMaximumPointsPerFrame.Value * 10;
         scalePercent = configScalePercent.Value / 100f;
         scale = Vector3.one / 10 * scalePercent;
+        baseAlpha = configAlpha.Value / 100f;
+        detectConcave = configDetectConcave.Value;
 
 
         nearestGridToCamera.x = 0;
@@ -407,13 +466,19 @@ public class Plugin : BaseUnityPlugin
 
             LastStandableColor = standable;
             LastNonStandableColor = NonStandable;
+        
+            Color c = standable;
+            c.a = baseAlpha;
 
-            standableMaterial.color = standable;
-            standableMaterial.SetColor("_BaseColor", standable);
+            standableMaterial.color = c;
+            standableMaterial.SetColor("_BaseColor", c);
             standableRP.material = standableMaterial;
 
-            nonStandableMaterial.color = NonStandable;
-            nonStandableMaterial.SetColor("_BaseColor", NonStandable);
+            c = NonStandable;
+            c.a = baseAlpha;
+
+            nonStandableMaterial.color = c;
+            nonStandableMaterial.SetColor("_BaseColor", c);
             nonStandableRP.material = nonStandableMaterial;
         }
     }
@@ -448,17 +513,45 @@ public class Plugin : BaseUnityPlugin
                 }
             }
 
+            CheckHotkeys();
+            if (configMode.Value == Mode.FadeAway) SetBallAlphas();
+
             if (configMode.Value == Mode.Continuous)
             {
+                if (continuousPauseToggleQueued && !isVisualizationRunning)
+                {
+                    continuousPauseToggleQueued = false;
+                    continuousPaused = !continuousPaused;
+
+                    /*
+
+                    if (continuousPaused)
+                    {
+                        ReturnAllBallsToPool();
+                    }
+                    else
+                    {
+                        // reset last camera to force full redraw
+                        nearestGridToCamera.x = 0;
+                        nearestGridToCamera.y = 0;
+                        nearestGridToCamera.z = 0;
+                    }
+                    */
+
+                    // just abuse the gem message for now to indicate if we're paused or not for testing purposes
+                    if (GlobalEvents.OnGemActivated != null)
+                    {
+                        GlobalEvents.OnGemActivated(!continuousPaused);
+                    }
+                }
+
                 if (!isVisualizationRunning && !continuousPaused)
                 {
+
                     isVisualizationRunning = true;
                     StartCoroutine(RenderChangedVisualizationCoroutine());
                 }
             }
-
-            CheckHotkeys();
-            if (configMode.Value == Mode.FadeAway) SetBallAlphas();
 
             try
             {
@@ -495,33 +588,13 @@ public class Plugin : BaseUnityPlugin
     {
         if (Input.GetKeyDown(configActivationKey.Value))
         {
-            if (isVisualizationRunning) return;
             if (configMode.Value == Mode.Continuous)
             {
-                continuousPaused = !continuousPaused;
-
-                /*
-
-                if (continuousPaused)
-                {
-                    ReturnAllBallsToPool();
-                }
-                else
-                {
-                    // reset last camera to force full redraw
-                    nearestGridToCamera.x = 0;
-                    nearestGridToCamera.y = 0;
-                    nearestGridToCamera.z = 0;
-                }
-                */
-
-                // just abuse the gem message for now to indicate if we're paused or not for testing purposes
-                if (GlobalEvents.OnGemActivated != null)
-                {
-                    GlobalEvents.OnGemActivated(!continuousPaused);
-                }
+                continuousPauseToggleQueued = true;
                 return;
             }
+
+            if (isVisualizationRunning) return;
 
             if (configMode.Value == Mode.Trigger)
             {
@@ -618,8 +691,6 @@ public class Plugin : BaseUnityPlugin
         ball.ballVisible = false;
         ball.ballMatrixIndex.Item1 = -1;
         ball.ballMatrixIndex.Item2 = -1;
-    
-        totalCalls++;
     }
 
 
@@ -668,8 +739,6 @@ public class Plugin : BaseUnityPlugin
                 }
             }
         }
-        
-        totalCalls++;
     }
 
     private IEnumerator RenderVisualizationCoroutine()
@@ -715,11 +784,13 @@ public class Plugin : BaseUnityPlugin
     }
 
 
+    int overallTotalCallsLastRender = 0;
     private IEnumerator RenderChangedVisualizationCoroutine()
     {
         additionalDebugInfo = "";
         lastScanTime = Time.time;
         totalCalls = 0;
+        int overallTotalCalls = 0;
         
         var (prevMinX, prevMaxX, prevMinZ, prevMaxZ) = cameraFrustum.GetFrequencyQuantizedXZFrustumBounds(freq);
 
@@ -771,6 +842,7 @@ public class Plugin : BaseUnityPlugin
 
                     if (totalCalls >= maximumRaysPerFrame)
                     {
+                        overallTotalCalls += totalCalls;
                         totalCalls = 0;
                         yield return null;
                     }
@@ -786,6 +858,7 @@ public class Plugin : BaseUnityPlugin
 
                     if (totalCalls >= maximumRaysPerFrame)
                     {
+                        overallTotalCalls += totalCalls;
                         totalCalls = 0;
                         yield return null;
                     }
@@ -813,6 +886,7 @@ public class Plugin : BaseUnityPlugin
 
                     if (totalCalls >= maximumRaysPerFrame)
                     {
+                        overallTotalCalls += totalCalls;
                         totalCalls = 0;
                         yield return null;
                     }
@@ -842,6 +916,7 @@ public class Plugin : BaseUnityPlugin
 
                     if (totalCalls >= maximumRaysPerFrame)
                     {
+                        overallTotalCalls += totalCalls;
                         totalCalls = 0;
                         yield return null;
                     }
@@ -873,6 +948,7 @@ public class Plugin : BaseUnityPlugin
 
                     if (totalCalls >= maximumRaysPerFrame)
                     {
+                        overallTotalCalls += totalCalls;
                         totalCalls = 0;
                         yield return null;
                     }
@@ -888,12 +964,15 @@ public class Plugin : BaseUnityPlugin
 
                     if (totalCalls >= maximumRaysPerFrame)
                     {
+                        overallTotalCalls += totalCalls;
                         totalCalls = 0;
                         yield return null;
                     }
                 }
             }
         }
+
+        overallTotalCallsLastRender = overallTotalCalls;
 
         isVisualizationRunning = false;
     }
@@ -1084,6 +1163,91 @@ public class Plugin : BaseUnityPlugin
         }
     }
 
+    private void DoRaycastRecursive(PositionYList pCache, Vector3 from, Vector3 to)
+    {
+        Vector3[] extraRaycastsNeeded = new Vector3[100];
+        int totalExtraRaycasts = 0;
+
+        int hitcount = Physics.RaycastNonAlloc(from, Vector3.down, _terrainHitBuffer, Vector3.Distance(from, to), HelperFunctions.GetMask(HelperFunctions.LayerType.TerrainMap), QueryTriggerInteraction.UseGlobal);
+
+        for (int i = 0; i < hitcount; i++)
+        {
+            totalCalls++;
+
+            RaycastHit raycastHit = _terrainHitBuffer[i];
+
+            if (!raycastHit.transform) continue;
+
+            if (raycastHit.point.y < 0.5f) continue; // ignore surfaces below sea level
+
+            CollisionModifier component = raycastHit.collider.GetComponent<CollisionModifier>();
+            if (component && !component.standable) continue;
+
+            if (detectConcave && totalExtraRaycasts < 100)
+            {
+                // detect if we need to do extra raycasts to fill in gaps due to concave surfaces
+                MeshCollider mc = raycastHit.collider as MeshCollider;
+                if (mc && !mc.convex)
+                {
+                    extraRaycastsNeeded[totalExtraRaycasts] = raycastHit.point;
+                    totalExtraRaycasts++;
+                }
+            }
+            
+            if (pCache.list.ContainsKey((int)Mathf.Round(raycastHit.point.y * 10f))) continue;
+
+            float angle = Vector3.Angle(Vector3.up, raycastHit.normal);
+
+            if (angle < 30f) continue; // don't need to show on flat ground
+
+            PositionKey positionKey = PositionKey.GetNew(
+                raycastHit.point.x,
+                raycastHit.point.y,
+                raycastHit.point.z,
+                angle < 50f
+            );
+            
+            pCache.list.Add((int)Mathf.Round(raycastHit.point.y * 10f), positionKey);
+        }
+
+        if (detectConcave)
+        {
+            // do extra raycasts for concave surfaces
+            for (int i = 0; i < totalExtraRaycasts; i++)
+            {
+                var line = extraRaycastsNeeded[i];
+
+                float closestY = to.y;
+                PositionKey closestPoint = null;
+
+                foreach (var position in pCache.list.Values)
+                {
+                    if (position != null)
+                    {
+                        // top down, so higher y is closer to start point
+                        if (position.position.y > closestY && position.position.y < line.y)
+                        {
+                            closestY = position.position.y;
+                            closestPoint = position;
+                        }
+                    }
+                }
+
+                if (closestPoint != null)
+                {
+                    Vector3 newFrom = line + Vector3.down * 0.5f;
+                    Vector3 newTo = closestPoint.position + Vector3.up * 0.1f;
+
+                    if (newTo.y >= newFrom.y) continue; // sanity check
+
+                    // start new raycast from just below the startpoint to just above the next point below it
+                    DoRaycastRecursive(pCache, newFrom, newTo);
+                    continue;
+                }
+            }
+        }
+    }
+
     private PositionYList CheckCacheMiss(int x, float y, int z)
     {
         PositionYList pCache = null;
@@ -1104,41 +1268,13 @@ public class Plugin : BaseUnityPlugin
             // Stop the line just before 0 y, since we don't need to be visualizing the shallow water floor
             // Remember that x/z are increased in magnitude for index purposes
             Vector3 from = new Vector3(x/10f, y + range * 1.5f, z/10f);
-
-            int hitcount = Physics.RaycastNonAlloc(from, Vector3.down, _terrainHitBuffer, range * 3f, HelperFunctions.GetMask(HelperFunctions.LayerType.TerrainMap), QueryTriggerInteraction.UseGlobal);
-
-            totalCalls++;
+            Vector3 to = from + Vector3.down * range * 3f;
 
             pCache.rayTop = from.y;
-            pCache.rayBottom = from.y - range * 3f;
+            pCache.rayBottom = to.y;
 
-            for (int i = 0; i < hitcount; i++)
-            {
-                RaycastHit raycastHit = _terrainHitBuffer[i];
+            DoRaycastRecursive(pCache, from, to);
 
-                if (!raycastHit.transform) continue;
-
-                if (raycastHit.point.y < 0.5f) continue; // ignore surfaces below sea level
-
-                CollisionModifier component = raycastHit.collider.GetComponent<CollisionModifier>();
-                if (component && !component.standable) continue;
-
-                float angle = Vector3.Angle(Vector3.up, raycastHit.normal);
-
-                if (angle < 30f) continue; // don't need to show on flat ground
-
-                if (pCache.list.ContainsKey((int)Mathf.Round(raycastHit.point.y * 10f))) continue;
-
-                PositionKey positionKey = PositionKey.GetNew(
-                    raycastHit.point.x,
-                    raycastHit.point.y,
-                    raycastHit.point.z,
-                    angle < 50f
-                );
-                
-                pCache.list.Add((int)Mathf.Round(raycastHit.point.y * 10f), positionKey);
-            }
-            
             positionCache[(x, z)] = pCache;
         }
         return pCache;
@@ -1153,7 +1289,7 @@ public class Plugin : BaseUnityPlugin
         if (Time.time - lastAlphaChangeTime < 0.05) return;
         lastAlphaChangeTime = Time.time;
 
-        alpha = Mathf.Lerp(1f, 0f, Mathf.Clamp01((Time.time - (lastScanTime + 3)) / 3));
+        alpha = Mathf.Lerp(baseAlpha, 0f, Mathf.Clamp01((Time.time - (lastScanTime + 3)) / 3));
 
 
         Color baseColor = standableMaterial.GetColor("_BaseColor");
@@ -1361,6 +1497,10 @@ public class Plugin : BaseUnityPlugin
         public float near;
         public float far;
 
+        public float nearSqr;
+        public float farSqr;
+
+
         public float tanHalfVertFov;
         public float tanHalfHorFov;
 
@@ -1375,6 +1515,9 @@ public class Plugin : BaseUnityPlugin
 
             near = cam.nearClipPlane;
             far  = cam.farClipPlane;
+
+            nearSqr = near * near;
+            farSqr  = far * far;
 
             if (farClipPlaneOverride > 0f)
             {
@@ -1393,6 +1536,8 @@ public class Plugin : BaseUnityPlugin
         float XPrepY = 0f;
         float XZPrepY = 0f;
 
+        float XPrepDistance = 0f;
+        float XZPrepDistance = 0f;
 
         public void PrepX(float x)
         {
@@ -1400,34 +1545,44 @@ public class Plugin : BaseUnityPlugin
             XPrepZ = x * forward.x;
             XPrepX = x * right.x;
             XPrepY = x * up.x;
+
+            XPrepDistance = x * x;
         }
 
         public void PrepXZ(float z)
         {
             z = z - camPos.z;
-            XZPrepZ = XPrepZ + z * forward.z;
-            XZPrepX = XPrepX + z * right.z;
-            XZPrepY = XPrepY + z * up.z;
+            XZPrepZ = XPrepZ + (z * forward.z);
+            XZPrepX = XPrepX + (z * right.z);
+            XZPrepY = XPrepY + (z * up.z);
+
+            XZPrepDistance = XPrepDistance + (z * z);
         }
 
         public bool PreppedYContains(float pointY)
         {
             pointY = pointY - camPos.y;
 
-            // Distance along camera forward
-            float z = XZPrepZ + pointY * forward.y;
+            // Approximate distance along camera forward. The edges of the camera will show further than the center, but faster
+            // We need z for other calcs anyway, so may as well use it to short circuit before doing the true distance check later.
+            float z = XZPrepZ + (pointY * forward.y);
             if (z < near || z > far)
                 return false;
-
+            
             // Offsets in camera's right / up directions
-            float x = XZPrepX + pointY * right.y;
+            float x = XZPrepX + (pointY * right.y);
             float maxX = z * tanHalfHorFov;
             if (Mathf.Abs(x) > maxX) return false;
 
-            float y = XZPrepY + pointY * up.y;
+            float y = XZPrepY + (pointY * up.y);
             float maxY = z * tanHalfVertFov;
 
             if (Mathf.Abs(y) > maxY) return false;
+
+            // True pythagoras distance from camera
+            float distSqr = XZPrepDistance + (pointY * pointY);
+            if (distSqr < nearSqr || distSqr > farSqr)
+                return false;
 
             return true;
         }
@@ -1451,6 +1606,11 @@ public class Plugin : BaseUnityPlugin
             float maxY = z * tanHalfVertFov;
 
             if (Mathf.Abs(y) > maxY) return false;
+
+            // True pythagoras distance from camera
+            float distSqr = v.sqrMagnitude;
+            if (distSqr < nearSqr || distSqr > farSqr)
+                return false;
 
             return true;
         }

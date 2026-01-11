@@ -2,9 +2,9 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <AssemblyName>Foothold</AssemblyName>
+    <AssemblyName>Foothold-Forked</AssemblyName>
     <Product>Foothold?</Product>
-    <Version>1.5.0</Version>
+    <Version>1.5.1</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RestoreAdditionalProjectSources>
@@ -40,4 +40,18 @@
   <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
   </ItemGroup>
+
+  
+  <PropertyGroup>
+    <DeployDir>.\deploy\AdvocatusDiaboli-Foothold-Forked\plugins\</DeployDir>
+  </PropertyGroup>
+
+  <Target Name="DeployFiles" AfterTargets="Build">
+    <Message Text="Deploy → $(DeployDir)$(AssemblyName).dll" Importance="High" />
+    <Error
+      Text="Plugins directory '$([MSBuild]::NormalizeDirectory($(DeployDir)))' doesn't exist! Configure DeployDir to point to a valid path in the Config.Build.user.props file."
+      Condition="!Exists('$(DeployDir)')"
+    />
+    <Copy SourceFiles="$(OutDir)$(TargetName).dll" DestinationFolder="$(DeployDir)" />
+  </Target>
 </Project>
