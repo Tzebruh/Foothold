@@ -1,9 +1,0 @@
-{
-    "name": "FootholdForked",
-    "version_number": "1.6.0",
-    "website_url": "https://github.com/cjmanca/Foothold",
-    "description": "A mod for PEAK that visualizes standable ground",
-    "dependencies": [
-        "BepInEx-BepInExPack_PEAK-5.4.75301"
-    ]
-}
