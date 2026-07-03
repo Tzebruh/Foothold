@@ -23,7 +23,7 @@ Key build facts:
 ## Packaging for Thunderstore
 
 Release packaging is manual; see [thunderstore/thunderstore.txt](thunderstore/thunderstore.txt) for the exact steps. Summary:
-1. Build the DLL (`bin/Debug/netstandard2.1/Foothold.dll` or Release equivalent).
+1. Build the DLL in **Release** (`bin/Release/netstandard2.1/Foothold.dll`) — Debug builds are unoptimized and should never be packaged for release.
 2. Assemble a `plugins/` folder with `Foothold.dll` + `foothold.assetbundle` (from `thunderstore/`).
 3. Zip that folder together with `icon.png`, `LICENSE`, `manifest.json`, `README.md`, `CHANGELOG.md` (all from `thunderstore/` or repo root) into `thunderstore/Tzebruh-Foothold-<version>.zip`.
 4. If the asset bundle shader/material changed, rebuild it from the Unity project in `foothold assetbundle project/` and copy the output from `Assets/ModBundles/` into `thunderstore/`.

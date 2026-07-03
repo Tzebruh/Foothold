@@ -15,6 +15,10 @@
     <RootNamespace>Foothold</RootNamespace>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Remove="foothold assetbundle project\**" />
     <EmbeddedResource Remove="foothold assetbundle project\**" />

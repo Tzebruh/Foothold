@@ -47,7 +47,9 @@ public class Plugin : BaseUnityPlugin
     internal static bool continuousPauseToggleQueued = false;
 
     private static readonly Dictionary<(int, int), PositionYList> positionCache = new();
-    
+
+    private static readonly Dictionary<Collider, CollisionModifier> _collisionModifierCache = new();
+
     private static readonly RaycastHit[] _terrainHitBuffer = new RaycastHit[1000];
     private static Mesh ballMesh;
     private static float lastScanTime = 0; // should only be needed when fade away is on
@@ -343,59 +345,95 @@ public class Plugin : BaseUnityPlugin
     static int highestCount = 0;
     static int highestBallCount = 0;
 
+    private float lastDebugOverlayBuildTime = -1f;
+    private string debugCameraPositionLabel = "";
+    private string debugBallsLabel = "";
+    private string debugHighestBallCountLabel = "";
+    private string debugPositionCacheCountLabel = "";
+    private string debugPositionCacheTotalYLabel = "";
+    private string debugPositionCacheHighestYLabel = "";
+    private string debugPositionCacheAllocationsLabel = "";
+    private string debugPositionCacheInUseLabel = "";
+    private string debugPositionCacheLeaksLabel = "";
+    private string debugTotalRaycastsLabel = "";
+    private string debugAlphaLabel = "";
+    private string debugIsVisualizationRunningLabel = "";
+    private string debugAdditionalInfoLabel = "";
+
     private void OnGUI()
     {
         if (!configDebugMode.Value) return;
 
-        int count = 0;
-        int ballCount = 0;
-
-        ballCount = nextFreeStandableMatrixIndex.Item1 * 500 + nextFreeStandableMatrixIndex.Item2;
-        ballCount += nextFreeNonStandableMatrixIndex.Item1 * 500 + nextFreeNonStandableMatrixIndex.Item2;
-
-        foreach (var yDict in positionCache.Values)
+        // Rebuilding these strings is wasteful to do on every OnGUI event (Unity calls this multiple times
+        // per frame), so only recompute at the same throttle rate as SetBallAlphas.
+        if (Time.time - lastDebugOverlayBuildTime >= 0.05f)
         {
-            count += yDict.list.Count;
+            lastDebugOverlayBuildTime = Time.time;
+
+            int count = 0;
+            int ballCount = 0;
+
+            ballCount = nextFreeStandableMatrixIndex.Item1 * 500 + nextFreeStandableMatrixIndex.Item2;
+            ballCount += nextFreeNonStandableMatrixIndex.Item1 * 500 + nextFreeNonStandableMatrixIndex.Item2;
+
+            foreach (var yDict in positionCache.Values)
+            {
+                count += yDict.list.Count;
+            }
+
+            if (count > highestCount)
+            {
+                highestCount = count;
+            }
+            if (ballCount > highestBallCount)
+            {
+                highestBallCount = ballCount;
+            }
+
+            debugCameraPositionLabel = "Camera Position: " + focalReferencePoint.ToString("F2");
+            debugBallsLabel = "balls: " + ballCount;
+            debugHighestBallCountLabel = "highestBallCount: " + highestBallCount;
+            debugPositionCacheCountLabel = "positionCache (x/z count): " + positionCache.Count;
+
+            debugPositionCacheTotalYLabel = "positionCache (total y count): " + count;
+            debugPositionCacheHighestYLabel = "positionCache (highest total y count): " + highestCount;
+            debugPositionCacheAllocationsLabel = "positionCache (allocations): " + PositionKey.totalAllocations;
+            debugPositionCacheInUseLabel = "positionCache (totalInUse): " + PositionKey.totalInUse;
+            debugPositionCacheLeaksLabel = "positionCache (leaks): " + (PositionKey.totalAllocations - (PositionKey.PoolCount + count));
+            debugTotalRaycastsLabel = "Total Raycasts Last Render: " + overallTotalCallsLastRender;
+
+            debugAlphaLabel = "alpha: " + alpha;
+            debugIsVisualizationRunningLabel = "isVisualizationRunning: " + isVisualizationRunning.ToString();
+            debugAdditionalInfoLabel = "additionalDebugInfo: " + additionalDebugInfo;
         }
 
-        if (count > highestCount)
-        {
-            highestCount = count;
-        }
-        if (ballCount > highestBallCount)
-        {
-            highestBallCount = ballCount;
-        }
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label("");
+        GUILayout.Label(debugCameraPositionLabel);
+        GUILayout.Label(debugBallsLabel);
+        GUILayout.Label(debugHighestBallCountLabel);
+        GUILayout.Label(debugPositionCacheCountLabel);
 
+        GUILayout.Label(debugPositionCacheTotalYLabel);
+        GUILayout.Label(debugPositionCacheHighestYLabel);
+        GUILayout.Label(debugPositionCacheAllocationsLabel);
+        GUILayout.Label(debugPositionCacheInUseLabel);
+        GUILayout.Label(debugPositionCacheLeaksLabel);
+        GUILayout.Label(debugTotalRaycastsLabel);
 
-
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("");
-        GUILayout.Label("Camera Position: " + focalReferencePoint.ToString("F2"));
-        GUILayout.Label("balls: " + ballCount);
-        GUILayout.Label("highestBallCount: " + highestBallCount);
-        GUILayout.Label("positionCache (x/z count): " + positionCache.Count);
-
-        GUILayout.Label("positionCache (total y count): " + count);
-        GUILayout.Label("positionCache (highest total y count): " + highestCount);
-        GUILayout.Label("positionCache (allocations): " + PositionKey.totalAllocations);
-        GUILayout.Label("positionCache (totalInUse): " + PositionKey.totalInUse);
-        GUILayout.Label("positionCache (leaks): " + (PositionKey.totalAllocations - (PositionKey.PoolCount + count)));
-        GUILayout.Label("Total Raycasts Last Render: " + overallTotalCallsLastRender);
-
-        GUILayout.Label("alpha: " + alpha);
-        GUILayout.Label("isVisualizationRunning: " + isVisualizationRunning.ToString());
-        GUILayout.Label("additionalDebugInfo: " + additionalDebugInfo);
+        GUILayout.Label(debugAlphaLabel);
+        GUILayout.Label(debugIsVisualizationRunningLabel);
+        GUILayout.Label(debugAdditionalInfoLabel);
 
     }
 
@@ -414,6 +452,7 @@ public class Plugin : BaseUnityPlugin
 
         ReturnAllBallsToPool();
         positionCache.Clear();
+        _collisionModifierCache.Clear();
 
         standableMatrices.Clear();
         linkedStandableMatrices.Clear();
@@ -785,6 +824,11 @@ public class Plugin : BaseUnityPlugin
 
 
     int overallTotalCallsLastRender = 0;
+
+    private readonly List<Rect> _newAreasBuf = new(4);
+    private readonly List<Rect> _expiredCacheKeepAreasBuf = new(4);
+    private readonly List<Rect> _expiredRecheckAreasBuf = new(4);
+
     private IEnumerator RenderChangedVisualizationCoroutine()
     {
         additionalDebugInfo = "";
@@ -813,10 +857,13 @@ public class Plugin : BaseUnityPlugin
 
         
 
-        var newAreas = SubtractRect(newArea, oldArea);
-        var expiredCacheKeepAreas = SubtractRect(oldCacheKeepArea, newCacheKeepArea);
-        var expiredRecheckAreas = SubtractRect(oldRecheckArea, recheckArea);
-        //var newRecheckAreas = SubtractRect(recheckArea, oldRecheckArea);
+        SubtractRect(newArea, oldArea, _newAreasBuf);
+        SubtractRect(oldCacheKeepArea, newCacheKeepArea, _expiredCacheKeepAreasBuf);
+        SubtractRect(oldRecheckArea, recheckArea, _expiredRecheckAreasBuf);
+
+        var newAreas = _newAreasBuf;
+        var expiredCacheKeepAreas = _expiredCacheKeepAreasBuf;
+        var expiredRecheckAreas = _expiredRecheckAreasBuf;
 
         PositionYList pCache = null;
 
@@ -977,9 +1024,9 @@ public class Plugin : BaseUnityPlugin
         isVisualizationRunning = false;
     }
 
-    public static List<Rect> SubtractRect(Rect original, Rect cut)
+    public static void SubtractRect(Rect original, Rect cut, List<Rect> result)
     {
-        var result = new List<Rect>();
+        result.Clear();
 
         // Find actual intersection (clamped to outer)
         float xMin = Mathf.Max(original.xMin, cut.xMin);
@@ -991,7 +1038,7 @@ public class Plugin : BaseUnityPlugin
         if (xMax <= xMin || yMax <= yMin)
         {
             result.Add(original);
-            return result;
+            return;
         }
 
         Rect cutArea = Rect.MinMaxRect(xMin, yMin, xMax, yMax);
@@ -1042,56 +1089,6 @@ public class Plugin : BaseUnityPlugin
                 cutArea.height
             );
             result.Add(right);
-        }
-
-        return result;
-    }
-
-
-
-    // Not going to try to fix right now, but couple issues with this:
-    // 1. Sorting in chunks means the overall list isn't fully sorted, just partially sorted in chunks - this alone negates the purpose of the sorting, since it will just look random anyway
-    // 2. Yielding during the replacement phase means that the list is in an inconsistent state while being sorted (duplicate entries, missing entries, etc). 
-    //    Probably not a big deal unless something else accesses the list while being sorted, but still not ideal
-    // 3. The sorting and custom comparison delegate adds processing time, which may negate the perceived performance gain that sorting is attempting to gain
-    //
-    // A temporary fix for the inconsistency is to only yield between chunks, while working on a temporary list, 
-    // but this is still not ideal, since the entire list should be sorted as a whole, not in chunks
-    // A full fix would require a different sorting algorithm that can be paused and resumed, which is non-trivial
-    // For now, I'm going to disable sorting, since the perceived performance gain is minimal compared to the complexity introduced
-    // especially in light of the other optimizations made (full vertical rays, caching)
-    IEnumerator SortWithYield(List<Vector3> list, Vector3 cameraPosition, int chunkSize)
-    {
-        int n = list.Count;
-        int totalIterations = 0;
-
-        // Create a custom comparison delegate
-        Comparison<Vector3> compare = (a, b) =>
-        {
-            float distA = (a - cameraPosition).sqrMagnitude;
-            float distB = (b - cameraPosition).sqrMagnitude;
-            return distA.CompareTo(distB);
-        };
-
-        // Sort in chunks
-        for (int i = 0; i < n; i += chunkSize)
-        {
-            int end = Mathf.Min(i + chunkSize, n);
-            List<Vector3> chunk = list.GetRange(i, end - i);
-
-            chunk.Sort(compare);
-
-            // Replace the chunk in the original list
-            for (int j = 0; j < chunk.Count; j++)
-            {
-                list[i + j] = chunk[j];
-                totalIterations++;
-
-                if (totalIterations % maximumRaysPerFrame == 0)
-                {
-                    yield return null;
-                }
-            }
         }
     }
 
@@ -1180,7 +1177,11 @@ public class Plugin : BaseUnityPlugin
 
             if (raycastHit.point.y < 0.5f) continue; // ignore surfaces below sea level
 
-            CollisionModifier component = raycastHit.collider.GetComponent<CollisionModifier>();
+            if (!_collisionModifierCache.TryGetValue(raycastHit.collider, out CollisionModifier component))
+            {
+                component = raycastHit.collider.GetComponent<CollisionModifier>();
+                _collisionModifierCache[raycastHit.collider] = component;
+            }
             if (component && !component.standable) continue;
 
             if (detectConcave && totalExtraRaycasts < 100)

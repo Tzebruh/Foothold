@@ -1,6 +1,6 @@
 To assemble the Thunderstore package, create a folder called plugins and include these files:
 
-Foothold.dll - From <repo>/bin/Debug/netstandard2.1/
+Foothold.dll - From <repo>/bin/Release/netstandard2.1/
 foothold.assetbundle - From <repo>/thunderstore/
 
 Then put that folder into a zip file along with these files:
