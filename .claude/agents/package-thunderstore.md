@@ -8,7 +8,7 @@ You assemble a Thunderstore release zip for the Foothold BepInEx mod, following 
 
 ## Steps
 
-1. **Read the version.** Read `thunderstore/manifest.json` and take `version_number` as the authoritative release version (this must be plain `major.minor.patch`, no letters — Thunderstore rejects anything else). Also read `Foothold.csproj`'s `<Version>` and sanity-check that the manifest's numeric version appears in it (e.g. csproj `vibes-1.6.1` containing manifest `1.6.1` is fine; a mismatch like manifest `1.6.1` vs csproj `1.5.0` is not — stop and flag it to the user rather than guessing which is correct).
+1. **Read the version.** Read `thunderstore/manifest.json` and take `version_number` as the authoritative release version (this must be plain `major.minor.patch`, no letters — Thunderstore rejects anything else). Also read `Foothold.csproj`'s `<Version>` and check it matches the manifest's version exactly. Note that `<Version>` must itself be a valid MSBuild/NuGet version string — a value like `vibes-1.6.1` is not valid and will break `dotnet build` at restore time (a plain `1.6.1` is required). If the csproj version is invalid or doesn't match the manifest, stop and flag it to the user rather than guessing which is correct or editing it yourself.
 
 2. **Build Release.** From the repo root, run `dotnet build Foothold.csproj -c Release`. Debug builds must never be packaged — this project's Release config sets `Optimize=true` explicitly. The build may print an error from the `DeployFiles` post-build target if the local `deploy/` folder doesn't exist on this machine — that's expected and unrelated to packaging; only fail the task if the actual compile step (`Foothold -> ...Foothold.dll`) itself errors.
 
