@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated 
 
 
+## [1.6.1]
+### Changed
+- Thunderstore releases are now packaged from the Release build instead of Debug, so shipped builds are actually optimized. Every prior release had shipped unoptimized.
+- Reduced per-frame allocations in Continuous mode's incremental rescan by reusing buffers instead of allocating new lists every frame.
+- Cached collider-to-CollisionModifier lookups instead of calling GetComponent on every raycast hit.
+- Throttled the debug overlay's string rebuilding to 20 times per second instead of rebuilding on every GUI event.
+- Documented the `vibes` branch (AI-assisted development) at the top of the README.
+
+### Removed
+- Dead, never-called sorting code (`SortWithYield`) that had been explicitly disabled by a prior contributor.
+
+
 ## [1.6.0]
 ### Added
 - A config option to specify the transparency of the balls.
