@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated 
 
 
+## [1.6.2]
+### Changed
+- Retargeted the project to Unity 6000.3.15f1, matching PEAK's editor upgrade.
+
+
 ## [1.6.1]
 ### Changed
 - Thunderstore releases are now packaged from the Release build instead of Debug, so shipped builds are actually optimized. Every prior release had shipped unoptimized.
