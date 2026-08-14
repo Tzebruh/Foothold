@@ -1,6 +1,9 @@
 # Foothold?
 Foothold? is a mod for PEAK that visualizes standable ground. This is meant to be used when you're unsure if a part of the wall will work as a foothold or not.
 
+## Branch Notice
+This branch, `main`, is currently outdated. The `vibes` branch has the latest changes, and is more performant. The difference is that AI was used to make those performance changes, and I know a lot of people take issue with AI-generated code. I honestly don't blame anyone for that, so I made that its own branch. I copy breaking changes over to this branch, so if you don't want to use a version with AI-generated code, this branch *should* still work.
+
 ## Usage
 By default, it continuously shows markers in a 10x10x10 cube around you.  A white ball means the ground is standable and a red ball means the ground is not standable. No balls will appear on ground that is less than a 30 degree slope for performance reasons, as it's obvious enough on its own. (And the red ones are more important anyway)
 
