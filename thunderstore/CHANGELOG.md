@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated 
 
 
+## [1.6.3]
+### Changed
+- Fixed the mod for the PEAK update (thanks cjmanca)
+
+
 ## [1.6.2]
 ### Changed
 - Retargeted the project to Unity 6000.3.15f1, matching PEAK's editor upgrade.
