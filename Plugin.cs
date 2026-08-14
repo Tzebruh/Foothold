@@ -577,11 +577,12 @@ public class Plugin : BaseUnityPlugin
                     }
                     */
 
-                    // just abuse the gem message for now to indicate if we're paused or not for testing purposes
-                    if (GlobalEvents.OnGemActivated != null)
-                    {
-                        GlobalEvents.OnGemActivated(!continuousPaused);
-                    }
+                    // Previously used the gem message as a hacky way to visually indicate whether continuous mode was paused or not,
+                    // but the biome update removed this function. Should eventually find another way to display
+                    //if (GlobalEvents.OnGemActivated != null)
+                    //{
+                    //    GlobalEvents.OnGemActivated(!continuousPaused);
+                    //}
                 }
 
                 if (!isVisualizationRunning && !continuousPaused)
